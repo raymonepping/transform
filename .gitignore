@@ -1,0 +1,9 @@
+.terraform/
+*.tfstate*
+*.tfplan
+*.backup
+.terraform.lock.hcl
+*.log
+crash.log
+git_commit.sh
+justfile
