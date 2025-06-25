@@ -9,4 +9,5 @@ module "compute" {
   project_name = var.project_name
   environment  = var.environment
   subnet_id    = module.network.subnet_id
+  sg_id        = module.network.sg_id   
 }
