@@ -1,5 +1,11 @@
+module "network" {
+  source = "./modules/network"
+}
+
+module "storage" {
+  source = "./modules/storage"
+}
+
 module "compute" {
-  source       = "./modules/compute"
-  region       = var.region
-  project_name = var.project_name
+  source = "./modules/compute"
 }
