@@ -2,7 +2,7 @@ resource "aws_instance" "docker_host" {
   ami                         = "ami-042b4708b1d05f512"
   instance_type               = "t3.micro"
   subnet_id                   = var.subnet_id
-  vpc_security_group_ids      = ["sg-047fb691c6ed53c84"]
+  vpc_security_group_ids      = ["sg-0be524b0ef20f0f39"]
   key_name                    = var.key_name
   associate_public_ip_address = true
 
