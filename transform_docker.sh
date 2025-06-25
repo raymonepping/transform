@@ -1,6 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
+# Load .env
+ENV_FILE="./.env"
+if [ -f "$ENV_FILE" ]; then
+  echo "📄 Loading environment variables from .env..."
+  export $(grep -v '^#' "$ENV_FILE" | xargs)
+else
+  echo "❌ .env file not found. Exiting."
+  exit 1
+fi
+
 # Defaults
 PROVIDER="docker"
 TYPE=""
@@ -149,14 +159,23 @@ echo "$ICON_VOLUME Volume module created: mysql_data"
 # Compute Module
 # ────────────────────────────────────────────────────────────────
 cat > modules/compute/main.tf <<EOF
-resource "aws_instance" "example" {
-  ami                    = "ami-06dd92ecc74fdfb36"  # Ubuntu 22.04 for eu-north-1
-  instance_type          = "t3.micro"
-  subnet_id              = module.network.aws_subnet_id
+resource "aws_instance" "docker_host" {
+  ami                         = "${AMI_ID}"
+  instance_type               = "${INSTANCE_TYPE}"
+  subnet_id                   = module.network.aws_subnet_id
   associate_public_ip_address = true
 
+  user_data = <<-EOF2
+              #!/bin/bash
+              yum update -y
+              amazon-linux-extras install docker -y
+              service docker start
+              usermod -a -G docker ec2-user
+              docker run -d --name ssh-clean ${DOCKER_IMAGE}
+              EOF2
+
   tags = {
-    Name = "\${var.project_name}-vm"
+    Name = "\${var.project_name}-docker-host"
   }
 }
 EOF
@@ -166,16 +185,16 @@ variable "project_name" { type = string }
 variable "environment"  { type = string }
 EOF
 
-echo "$ICON_COMPUTE Service module created: example EC2"
+echo "$ICON_COMPUTE Service module created: docker_host EC2"
 
 # ────────────────────────────────────────────────────────────────
 # Image build step (if enabled)
 # ────────────────────────────────────────────────────────────────
 if $BUILD; then
   echo "$ICON_BUILD Building image for ssh-clean from ./ssh-clean ..."
-  docker build -t repping/ssh-clean:latest ./ssh-clean > /dev/null
-  docker push repping/ssh-clean:latest > /dev/null
-  echo "$ICON_PACKAGE Built and pushed: repping/ssh-clean:latest"
+  docker build -t ${DOCKER_IMAGE} ./ssh-clean > /dev/null
+  docker push ${DOCKER_IMAGE} > /dev/null
+  echo "$ICON_PACKAGE Built and pushed: ${DOCKER_IMAGE}"
 fi
 
 echo "$ICON_SUCCESS All modules created!"

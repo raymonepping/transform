@@ -1,13 +1,3 @@
-variable "project_name" { 
-    type = string 
-    default = "ubuntu_test"
-}
-
-variable "environment"  { 
-    type = string 
-    default = "dev"
-}
-variable "region" {
-  type    = string
-  default = "eu-north-1"
-}
+variable "project_name" { type = string }
+variable "environment"  { type = string }
+variable "region"       { type = string  default = "eu-north-1" }
