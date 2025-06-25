@@ -78,6 +78,8 @@ module "compute" {
   source       = "./modules/compute"
   project_name = var.project_name
   environment  = var.environment
+  subnet_id    = module.network.subnet_id
+  sg_id        = module.network.sg_id   
 }
 EOF
 
@@ -130,6 +132,16 @@ resource "aws_subnet" "main" {
 }
 EOF
 
+cat > modules/network/outputs.tf <<EOF
+output "subnet_id" {
+  value = aws_subnet.main.id
+}
+
+output "sg_id" {
+  value = aws_security_group.allow_all.id
+}
+EOF
+
 cat > modules/network/variables.tf <<EOF
 variable "project_name" { type = string }
 variable "environment"  { type = string }
@@ -165,7 +177,7 @@ cat > modules/compute/main.tf <<EOF
 resource "aws_instance" "docker_host" {
   ami                         = "${AMI_ID}"
   instance_type               = "${INSTANCE_TYPE}"
-  subnet_id                   = module.network.aws_subnet_id
+  subnet_id                   = var.subnet_id
   associate_public_ip_address = true
 
   user_data = <<-EOF2
@@ -186,6 +198,12 @@ EOF
 cat > modules/compute/variables.tf <<EOF
 variable "project_name" { type = string }
 variable "environment"  { type = string }
+variable "subnet_id" {
+  type = string
+}
+variable "sg_id" {
+  type = string
+}
 EOF
 
 echo "$ICON_COMPUTE Service module created: docker_host EC2"
