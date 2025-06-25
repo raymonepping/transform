@@ -60,7 +60,10 @@ EOF
 cat > variables.tf <<EOF
 variable "project_name" { type = string }
 variable "environment"  { type = string }
-variable "region"       { type = string  default = "eu-north-1" }
+variable "region"       { 
+  type = string  
+  default = "eu-north-1" 
+}
 EOF
 
 # Root main.tf

@@ -1,7 +1,7 @@
 resource "aws_instance" "docker_host" {
   ami                         = "ami-042b4708b1d05f512"
   instance_type               = "t3.micro"
-  subnet_id                   = module.network.aws_subnet_id
+  subnet_id                   = var.subnet_id
   associate_public_ip_address = true
 
   user_data = <<-EOF2
