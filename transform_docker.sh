@@ -56,6 +56,13 @@ provider "aws" {
 }
 EOF
 
+# Root outputs.tf
+cat > outputs.tf <<EOF
+output "public_ip" {
+  value = module.compute.public_ip
+}
+EOF
+
 # Root variables.tf
 cat > variables.tf <<EOF
 variable "project_name" { type = string }
@@ -112,9 +119,9 @@ EOF
 # ────────────────────────────────────────────────────────────────
 # Network Module
 # ────────────────────────────────────────────────────────────────
-cat > modules/network/main.tf <<EOF
+cat > cat > modules/network/main.tf <<EOF
 resource "aws_security_group" "allow_all" {
-  name        = "${var.project_name}-allow-all"
+  name        = "\${var.project_name}-allow-all"
   description = "Allow all inbound traffic"
   vpc_id      = aws_vpc.main.id
 
@@ -133,7 +140,7 @@ resource "aws_security_group" "allow_all" {
   }
 
   tags = {
-    Name = "${var.project_name}-sg"
+    Name = "\${var.project_name}-sg"
   }
 }
 
@@ -253,6 +260,12 @@ variable "subnet_id" {
 }
 variable "sg_id" {
   type = string
+}
+EOF
+
+cat > modules/compute/outputs.tf <<EOF
+output "public_ip" {
+  value = aws_instance.docker_host.public_ip
 }
 EOF
 
