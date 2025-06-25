@@ -71,6 +71,10 @@ variable "region"       {
   type = string  
   default = "eu-north-1" 
 }
+variable "key_name" {
+  type = string
+  default = "transformation_key"
+}
 EOF
 
 # Root main.tf
@@ -85,8 +89,9 @@ module "compute" {
   source       = "./modules/compute"
   project_name = var.project_name
   environment  = var.environment
+  key_name     = var.key_name   
   subnet_id    = module.network.subnet_id
-  sg_id        = module.network.sg_id   
+  sg_id        = module.network.sg_id
 }
 EOF
 
@@ -110,7 +115,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.99.0"
+      version = "~> 5.100.0"
     }
   }
 }
@@ -235,6 +240,7 @@ resource "aws_instance" "docker_host" {
   ami                         = "${AMI_ID}"
   instance_type               = "${INSTANCE_TYPE}"
   subnet_id                   = var.subnet_id
+  key_name                    = var.key_name
   associate_public_ip_address = true
 
   user_data = <<-EOF2
@@ -259,6 +265,9 @@ variable "subnet_id" {
   type = string
 }
 variable "sg_id" {
+  type = string
+}
+variable "key_name" {
   type = string
 }
 EOF
