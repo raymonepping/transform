@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === Load .env file
+# 🧪 Load environment
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
-  set -a
-  source "${SCRIPT_DIR}/.env"
-  set +a
+  set -a; source "${SCRIPT_DIR}/.env"; set +a
 else
   echo "❌ .env file missing next to transform_docker.sh"
   exit 1
@@ -18,37 +16,36 @@ if [[ -z "$DOCKERHUB_REPO" ]]; then
   exit 1
 fi
 
-# === Defaults
+# 🚀 Defaults
 COMPOSE_FILE="docker-compose.yml"
 MODULE_DIR="./modules"
 NETWORK_MODULE="$MODULE_DIR/network"
 COMPUTE_MODULE="$MODULE_DIR/compute"
 STORAGE_MODULE="$MODULE_DIR/storage"
+IMAGES_MODULE="$MODULE_DIR/images"
 
 PROVIDER="docker"
-TYPE=""
 BUILD_ENABLED=false
 
-# === Parse CLI arguments
+# 🎮 Parse CLI flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --provider) PROVIDER="$2"; shift 2 ;;
-    --type) TYPE="$2"; shift 2 ;;
     --build) BUILD_ENABLED=true; shift ;;
-    *) echo "Unknown argument: $1"; exit 1 ;;
+    *) echo "❌ Unknown argument: $1"; exit 1 ;;
   esac
 done
 
-echo "🔧 Provider: $PROVIDER"
-[[ "$TYPE" != "" ]] && echo "📦 Type: $TYPE"
-echo "🔨 Build enabled: $BUILD_ENABLED"
-echo "🔄 Transforming $COMPOSE_FILE into Terraform modules..."
+echo ""
+echo "🐳  Provider: $PROVIDER"
+echo "🔧 Build enabled: $BUILD_ENABLED"
+echo "🔄 Parsing $COMPOSE_FILE into Terraform modules..."
+echo ""
 
-mkdir -p "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE"
+mkdir -p "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE"
 
-# === Provider.tf content based on provider
-if [[ "$PROVIDER" == "docker" ]]; then
-  MODULE_PROVIDER_TF=$(cat <<EOF
+# 🧱 Provider config
+MODULE_PROVIDER_TF=$(cat <<EOF
 terraform {
   required_providers {
     docker = {
@@ -59,47 +56,31 @@ terraform {
 }
 EOF
 )
-elif [[ "$PROVIDER" == "aws" ]]; then
-  MODULE_PROVIDER_TF=$(cat <<EOF
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-EOF
-)
-else
-  echo "❌ Unsupported provider: $PROVIDER"
-  exit 1
-fi
 
-echo "$MODULE_PROVIDER_TF" > "$NETWORK_MODULE/provider.tf"
-echo "$MODULE_PROVIDER_TF" > "$COMPUTE_MODULE/provider.tf"
-echo "$MODULE_PROVIDER_TF" > "$STORAGE_MODULE/provider.tf"
+for mod in "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE"; do
+  echo "$MODULE_PROVIDER_TF" > "$mod/provider.tf"
+done
 
-# === Network
+# 🌐 Network
 NETWORK_NAME=$(yq '.networks | keys | .[0]' "$COMPOSE_FILE")
 cat > "$NETWORK_MODULE/${PROVIDER}_network.tf" <<EOF
 resource "${PROVIDER}_network" "$NETWORK_NAME" {
   name = "$NETWORK_NAME"
 }
 EOF
-echo "✅ Network module created: $NETWORK_NAME"
+echo "🌐 Network module created: $NETWORK_NAME"
 
-# === Volumes
+# 💾 Volumes
 yq '.volumes | keys | .[]' "$COMPOSE_FILE" | while read -r VOL; do
   cat > "$STORAGE_MODULE/${VOL}_volume.tf" <<EOF
 resource "${PROVIDER}_volume" "$VOL" {
   name = "$VOL"
 }
 EOF
-  echo "✅ Volume module created: $VOL"
+  echo "💾 Volume module created: $VOL"
 done
 
-# === Services
+# ⚙️ Services
 yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
   SERVICE_FILE="$COMPUTE_MODULE/${SERVICE}.tf"
   IMAGE=$(yq ".services.${SERVICE}.image // \"null\"" "$COMPOSE_FILE")
@@ -108,7 +89,12 @@ yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
   VOLUME_MOUNT=$(yq ".services.${SERVICE}.volumes[0] // \"\"" "$COMPOSE_FILE")
   PORTS=$(yq ".services.${SERVICE}.ports // []" "$COMPOSE_FILE" | yq 'join(", ")')
 
-  # === Build if needed (only for Docker provider)
+  if [[ "$IMAGE" == "null" && "$BUILD_CONTEXT" == "" ]]; then
+    echo "⚠️  Warning: No image or build context defined for service: $SERVICE"
+    continue
+  fi
+
+  # 🔨 Optional build
   if [[ "$BUILD_ENABLED" == "true" && "$BUILD_CONTEXT" != "" ]]; then
     echo "🔧 Building image for $SERVICE from $BUILD_CONTEXT ..."
     VERSION_FILE="${BUILD_CONTEXT}/.image_version"
@@ -126,64 +112,55 @@ yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
     docker build -t "$IMAGE" -t "${DOCKERHUB_REPO}/${SERVICE}:latest" "$BUILD_CONTEXT"
     docker push "$IMAGE"
     docker push "${DOCKERHUB_REPO}/${SERVICE}:latest"
-    echo "✅ Built and pushed: $IMAGE"
+    echo "📦 Built and pushed: $IMAGE"
   fi
 
-  # === Docker container block (or AWS EC2 placeholder)
-  if [[ "$PROVIDER" == "docker" ]]; then
-    echo "resource \"docker_container\" \"$SERVICE\" {" > "$SERVICE_FILE"
-    echo "  name  = \"$SERVICE\"" >> "$SERVICE_FILE"
-    echo "  image = \"$IMAGE\"" >> "$SERVICE_FILE"
+  # 🖼 Store image module (even for prebuilt)
+  echo "resource \"docker_image\" \"$SERVICE\" {" > "$IMAGES_MODULE/${SERVICE}.tf"
+  echo "  name = \"$IMAGE\"" >> "$IMAGES_MODULE/${SERVICE}.tf"
+  echo "}" >> "$IMAGES_MODULE/${SERVICE}.tf"
 
-    if [[ "$PORTS" != "" ]]; then
-      for port in $(echo "$PORTS" | sed 's/, /\n/g'); do
-        echo "  ports {" >> "$SERVICE_FILE"
-        echo "    internal = ${port##*:}" >> "$SERVICE_FILE"
-        echo "    external = ${port%%:*}" >> "$SERVICE_FILE"
-        echo "  }" >> "$SERVICE_FILE"
-      done
-    fi
+  # 🧱 Compute module
+  echo "resource \"docker_container\" \"$SERVICE\" {" > "$SERVICE_FILE"
+  echo "  name  = \"$SERVICE\"" >> "$SERVICE_FILE"
+  echo "  image = docker_image.${SERVICE}.latest" >> "$SERVICE_FILE"
 
-    if [[ "$ENV_FILE" != "" && -f "$ENV_FILE" ]]; then
-      echo "  env = [" >> "$SERVICE_FILE"
-      while IFS='=' read -r KEY VALUE; do
-        [[ -z "$KEY" || "$KEY" =~ ^# ]] && continue
-        echo "    \"$KEY=$VALUE\"," >> "$SERVICE_FILE"
-      done < "$ENV_FILE"
-      echo "  ]" >> "$SERVICE_FILE"
-    fi
-
-    if [[ "$VOLUME_MOUNT" != "" ]]; then
-      VOL_SRC=$(echo "$VOLUME_MOUNT" | cut -d':' -f1)
-      VOL_DST=$(echo "$VOLUME_MOUNT" | cut -d':' -f2)
-      echo "  volumes {" >> "$SERVICE_FILE"
-      echo "    volume_name    = \"$VOL_SRC\"" >> "$SERVICE_FILE"
-      echo "    container_path = \"$VOL_DST\"" >> "$SERVICE_FILE"
+  if [[ "$PORTS" != "" ]]; then
+    for port in $(echo "$PORTS" | sed 's/, /\n/g'); do
+      echo "  ports {" >> "$SERVICE_FILE"
+      echo "    internal = ${port##*:}" >> "$SERVICE_FILE"
+      echo "    external = ${port%%:*}" >> "$SERVICE_FILE"
       echo "  }" >> "$SERVICE_FILE"
-    fi
-
-    echo "  networks_advanced {" >> "$SERVICE_FILE"
-    echo "    name = \"$NETWORK_NAME\"" >> "$SERVICE_FILE"
-    echo "  }" >> "$SERVICE_FILE"
-
-    echo "}" >> "$SERVICE_FILE"
-  elif [[ "$PROVIDER" == "aws" && "$TYPE" == "ec2" ]]; then
-    cat > "$SERVICE_FILE" <<EOF
-resource "aws_instance" "${SERVICE}" {
-  ami           = "ami-0c55b159cbfafe1f0" # Placeholder
-  instance_type = "t2.micro"
-
-  tags = {
-    Name = "${SERVICE}"
-  }
-}
-EOF
+    done
   fi
 
-  echo "✅ Service module created: $SERVICE"
+  if [[ "$ENV_FILE" != "" && -f "$ENV_FILE" ]]; then
+    echo "  env = [" >> "$SERVICE_FILE"
+    while IFS='=' read -r KEY VALUE; do
+      [[ -z "$KEY" || "$KEY" =~ ^# ]] && continue
+      echo "    \"$KEY=$VALUE\"," >> "$SERVICE_FILE"
+    done < "$ENV_FILE"
+    echo "  ]" >> "$SERVICE_FILE"
+  fi
+
+  if [[ "$VOLUME_MOUNT" != "" ]]; then
+    VOL_SRC=$(echo "$VOLUME_MOUNT" | cut -d':' -f1)
+    VOL_DST=$(echo "$VOLUME_MOUNT" | cut -d':' -f2)
+    echo "  volumes {" >> "$SERVICE_FILE"
+    echo "    volume_name    = \"$VOL_SRC\"" >> "$SERVICE_FILE"
+    echo "    container_path = \"$VOL_DST\"" >> "$SERVICE_FILE"
+    echo "  }" >> "$SERVICE_FILE"
+  fi
+
+  echo "  networks_advanced {" >> "$SERVICE_FILE"
+  echo "    name = \"$NETWORK_NAME\"" >> "$SERVICE_FILE"
+  echo "  }" >> "$SERVICE_FILE"
+  echo "}" >> "$SERVICE_FILE"
+
+  echo "⚙️  Service module created: $SERVICE"
 done
 
-# === Root files
+# 🧾 Root Terraform Files
 cat > main.tf <<EOF
 module "network" {
   source = "./modules/network"
@@ -193,6 +170,10 @@ module "storage" {
   source = "./modules/storage"
 }
 
+module "images" {
+  source = "./modules/images"
+}
+
 module "compute" {
   source = "./modules/compute"
 }
@@ -200,11 +181,10 @@ EOF
 
 cat > provider.tf <<EOF
 $MODULE_PROVIDER_TF
-
-provider "$PROVIDER" {}
 EOF
 
 touch variables.tf outputs.tf
 
-echo "✅ Root Terraform files created."
-echo "🎉 Done. Run: terraform init && terraform apply"
+echo ""
+echo "✅ All modules created!"
+echo "🎯 You're ready. Run: terraform init && terraform apply"

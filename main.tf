@@ -11,15 +11,18 @@ provider "docker" {
   host = "unix:///var/run/docker.sock"
 }
 
-resource "docker_image" "nginx" {
-  name = "nginx:latest"
+module "network" {
+  source = "./modules/network"
 }
 
-resource "docker_container" "nginx" {
-  name  = "nginx-from-terraform"
-  image = docker_image.nginx.name
-  ports {
-    internal = 80
-    external = 8080
-  }
+module "storage" {
+  source = "./modules/storage"
+}
+
+module "images" {
+  source = "./modules/images"
+}
+
+module "compute" {
+  source = "./modules/compute"
 }
