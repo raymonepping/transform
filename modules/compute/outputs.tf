@@ -1,3 +1,3 @@
-output "ssh_clean_name" {
+output "ssh-clean_name" {
   value = docker_container.ssh-clean.name
 }

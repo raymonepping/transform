@@ -17,6 +17,3 @@ services:
     
 networks:
   transform:
-
-volumes:
-  mysql_data:

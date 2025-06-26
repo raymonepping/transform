@@ -1,3 +1,3 @@
-output "ssh_clean_name" {
-  value = module.compute.ssh_clean_name
+output "ssh-clean_name" {
+  value = module.compute.ssh-clean_name
 }

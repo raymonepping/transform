@@ -245,7 +245,13 @@ variable "project_name" {
 }
 EOF
 
-touch outputs.tf
+# 📤 Root outputs for HCP visibility
+: > outputs.tf
+for SERVICE in "${!SERVICE_IMAGE_VARS[@]}"; do
+  echo "output \"${SERVICE}_name\" {
+  value = module.compute.${SERVICE}_name
+}" >> outputs.tf
+done
 
 echo ""
 echo "✅ All modules created!"
