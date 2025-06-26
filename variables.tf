@@ -1,11 +1,6 @@
-variable "project_name" {
-  description = "Project name for tagging or naming"
-  type        = string
-  default     = "transform"
-}
-
-variable "environment" {
-  description = "Environment identifier (e.g., dev, prod)"
-  type        = string
-  default     = "dev"
+variable "project_name" { type = string }
+variable "environment"  { type = string }
+variable "region"       { 
+  type = string  
+  default = "eu-north-1" 
 }
