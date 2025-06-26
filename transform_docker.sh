@@ -1,300 +1,192 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-# Load .env
-ENV_FILE="./.env"
-if [ -f "$ENV_FILE" ]; then
-  echo "📄 Loading environment variables from .env..."
-  export $(grep -v '^#' "$ENV_FILE" | xargs)
+# 🧪 Load environment
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/.env" ]]; then
+  set -a; source "${SCRIPT_DIR}/.env"; set +a
 else
-  echo "❌ .env file not found. Exiting."
+  echo "❌ .env file missing next to transform_docker.sh"
   exit 1
 fi
 
-# Defaults
-PROVIDER="docker"
-TYPE=""
-BUILD=false
+DOCKERHUB_REPO="${DOCKERHUB_REPO:-}"
+if [[ -z "$DOCKERHUB_REPO" ]]; then
+  echo "❌ DOCKERHUB_REPO not set in .env"
+  exit 1
+fi
 
-# Parse arguments
+# 🚀 Defaults
+COMPOSE_FILE="docker-compose.yml"
+MODULE_DIR="./modules"
+NETWORK_MODULE="$MODULE_DIR/network"
+COMPUTE_MODULE="$MODULE_DIR/compute"
+STORAGE_MODULE="$MODULE_DIR/storage"
+IMAGE_MODULE="$MODULE_DIR/images"
+
+PROVIDER="docker"
+BUILD_ENABLED=false
+
+# 🎮 Parse CLI flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --provider) PROVIDER="$2"; shift 2 ;;
-    --type) TYPE="$2"; shift 2 ;;
-    --build) BUILD=true; shift ;;
-    *) echo "Unknown option: $1"; exit 1 ;;
+    --build) BUILD_ENABLED=true; shift ;;
+    *) echo "❌ Unknown argument: $1"; exit 1 ;;
   esac
 done
 
-# Icons
-ICON_DOCKER="🐳"
-ICON_AWS="☁️"
-ICON_COMPUTE="⚙️"
-ICON_VOLUME="💾"
-ICON_NETWORK="🌐"
-ICON_SUCCESS="✅"
-ICON_PACKAGE="📦"
-ICON_BUILD="🔧"
-ICON_ARROW="🔄"
-ICON_READY="🎯"
-ICON_MODULE="🧱"
-
 echo ""
-[[ "$PROVIDER" == "aws" ]] && echo "$ICON_AWS  Provider: $PROVIDER" || echo "$ICON_DOCKER  Provider: $PROVIDER"
-[[ -n "$TYPE" ]] && echo "$ICON_PACKAGE Type: $TYPE"
-$BUILD && echo "$ICON_BUILD Build enabled: true"
-echo "$ICON_ARROW Parsing docker-compose.yml into Terraform modules..."
+echo "🐳 Provider: $PROVIDER"
+echo "🔧 Build enabled: $BUILD_ENABLED"
+echo "🔄 Parsing $COMPOSE_FILE into Terraform modules..."
+echo ""
 
-# Setup
-mkdir -p modules/{network,compute,storage}
-touch variables.tf outputs.tf main.tf provider.tf locals.tf versions.tf
+mkdir -p "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGE_MODULE"
 
-# Root provider.tf
-cat > provider.tf <<EOF
-provider "aws" {
-  region = var.region
-}
-EOF
-
-# Root outputs.tf
-cat > outputs.tf <<EOF
-output "public_ip" {
-  value = module.compute.public_ip
-}
-EOF
-
-# Root variables.tf
-cat > variables.tf <<EOF
-variable "project_name" { type = string }
-variable "environment"  { type = string }
-variable "region"       { 
-  type = string  
-  default = "eu-north-1" 
-}
-variable "key_name" {
-  type = string
-  default = "transformation_key"
-}
-EOF
-
-# Root main.tf
-cat > main.tf <<EOF
-module "network" {
-  source       = "./modules/network"
-  project_name = var.project_name
-  environment  = var.environment
-}
-
-module "compute" {
-  source       = "./modules/compute"
-  project_name = var.project_name
-  environment  = var.environment
-  key_name     = var.key_name   
-  subnet_id    = module.network.subnet_id
-  sg_id        = module.network.sg_id
-}
-EOF
-
-# Root locals.tf
-cat > locals.tf <<EOF
-locals {
-  common_tags = {
-    Project     = var.project_name
-    Environment = var.environment
-    Owner       = "raymon.epping"
-    ManagedBy   = "Terraform"
-  }
-}
-EOF
-
-# Root versions.tf
-cat > versions.tf <<EOF
+# 🧱 Provider block
+MODULE_PROVIDER_TF=$(cat <<EOF
 terraform {
-  required_version = ">= 1.3.0"
-
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.100.0"
+    docker = {
+      source  = "kreuzwerker/docker"
+      version = "~> 3.0"
     }
   }
 }
+
+provider "docker" {}
 EOF
+)
 
-# ────────────────────────────────────────────────────────────────
-# Network Module
-# ────────────────────────────────────────────────────────────────
-cat > cat > modules/network/main.tf <<EOF
-resource "aws_security_group" "allow_all" {
-  name        = "\${var.project_name}-allow-all"
-  description = "Allow all inbound traffic"
-  vpc_id      = aws_vpc.main.id
+for module in "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGE_MODULE"; do
+  echo "$MODULE_PROVIDER_TF" > "$module/provider.tf"
+done
 
-  ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "\${var.project_name}-sg"
-  }
-}
-
-resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
-
-  tags = {
-    Name = "\${var.project_name}-igw"
-  }
-}
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
-  }
-
-  tags = {
-    Name = "\${var.project_name}-rt"
-  }
-}
-
-resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.main.id
-  route_table_id = aws_route_table.public.id
-
-  depends_on = [
-    aws_internet_gateway.main,
-    aws_route_table.public,
-    aws_subnet.main
-  ]
-}
-
-resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
-  tags = {
-    Name = "\${var.project_name}-vpc"
-  }
-}
-
-resource "aws_subnet" "main" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = "eu-north-1a"
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name = "\${var.project_name}-subnet"
-  }
+# 🌐 Network
+NETWORK_NAME=$(yq '.networks | keys | .[0]' "$COMPOSE_FILE")
+cat > "$NETWORK_MODULE/network.tf" <<EOF
+resource "docker_network" "$NETWORK_NAME" {
+  name = "$NETWORK_NAME"
 }
 EOF
+echo "🌐 Network module created: $NETWORK_NAME"
 
-cat > modules/network/outputs.tf <<EOF
-output "subnet_id" {
-  value = aws_subnet.main.id
-}
-
-output "sg_id" {
-  value = aws_security_group.allow_all.id
-}
-EOF
-
-cat > modules/network/variables.tf <<EOF
-variable "project_name" { type = string }
-variable "environment"  { type = string }
-EOF
-
-echo "$ICON_NETWORK Network module created: transform"
-
-# ────────────────────────────────────────────────────────────────
-# Storage Module
-# ────────────────────────────────────────────────────────────────
-cat > modules/storage/main.tf <<EOF
-# Placeholder for volume if needed
-resource "aws_ebs_volume" "mysql_data" {
-  availability_zone = "eu-north-1a"
-  size              = 10
-  tags = {
-    Name = "mysql_data_volume"
-  }
+# 💾 Volumes
+yq '.volumes | keys | .[]' "$COMPOSE_FILE" | while read -r VOL; do
+  cat > "$STORAGE_MODULE/${VOL}_volume.tf" <<EOF
+resource "docker_volume" "$VOL" {
+  name = "$VOL"
 }
 EOF
+  echo "💾 Volume module created: $VOL"
+done
 
-cat > modules/storage/variables.tf <<EOF
-variable "project_name" { type = string }
-variable "environment"  { type = string }
+# 📦 Images and ⚙️ Containers
+yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
+  SERVICE_FILE="$COMPUTE_MODULE/${SERVICE}.tf"
+  IMAGE=$(yq ".services.${SERVICE}.image // \"\"" "$COMPOSE_FILE")
+  BUILD_CONTEXT=$(yq ".services.${SERVICE}.build.context // \"\"" "$COMPOSE_FILE")
+  ENV_FILE=$(yq ".services.${SERVICE}.env_file[0] // \"\"" "$COMPOSE_FILE")
+  PORTS=$(yq ".services.${SERVICE}.ports // []" "$COMPOSE_FILE" | yq 'join(", ")')
+  VOLUME_MOUNT=$(yq ".services.${SERVICE}.volumes[0] // \"\"" "$COMPOSE_FILE")
+
+  # 🔧 Build image if required
+  if [[ "$BUILD_CONTEXT" != "" ]]; then
+    VERSION_FILE="${BUILD_CONTEXT}/.image_version"
+    VERSION="0.0.0"
+    [[ -f "$VERSION_FILE" ]] && VERSION=$(cat "$VERSION_FILE")
+
+    IFS='.' read -r major minor patch <<< "${VERSION:-0.0.0}"
+    patch=$((patch + 1))
+    NEW_VERSION="${major}.${minor}.${patch}"
+    echo "$NEW_VERSION" > "$VERSION_FILE"
+
+    IMAGE="${DOCKERHUB_REPO}/${SERVICE}:${NEW_VERSION}"
+
+    if [[ "$BUILD_ENABLED" == "true" ]]; then
+      echo "🔨 Building and pushing image for $SERVICE..."
+      docker build -t "$IMAGE" -t "${DOCKERHUB_REPO}/${SERVICE}:latest" "$BUILD_CONTEXT"
+      docker push "$IMAGE"
+      docker push "${DOCKERHUB_REPO}/${SERVICE}:latest"
+    else
+      echo "⚠️  Build required for $SERVICE but --build not enabled."
+    fi
+  fi
+
+  # 🖼️ Write image module
+  IMAGE_FILE="$IMAGE_MODULE/${SERVICE}_image.tf"
+  cat > "$IMAGE_FILE" <<EOF
+resource "docker_image" "${SERVICE}" {
+  name = "$IMAGE"
+}
+EOF
+  echo "🖼️  Image module written: $SERVICE"
+
+  # ⚙️ Write container module
+  cat > "$SERVICE_FILE" <<EOF
+resource "docker_container" "${SERVICE}" {
+  name  = "${SERVICE}"
+  image = docker_image.${SERVICE}.latest
 EOF
 
-echo "$ICON_VOLUME Volume module created: mysql_data"
+  if [[ "$PORTS" != "" ]]; then
+    for port in $(echo "$PORTS" | sed 's/, /\n/g'); do
+      echo "  ports {" >> "$SERVICE_FILE"
+      echo "    internal = ${port##*:}" >> "$SERVICE_FILE"
+      echo "    external = ${port%%:*}" >> "$SERVICE_FILE"
+      echo "  }" >> "$SERVICE_FILE"
+    done
+  fi
 
-# ────────────────────────────────────────────────────────────────
-# Compute Module
-# ────────────────────────────────────────────────────────────────
-cat > modules/compute/main.tf <<EOF
-resource "aws_instance" "docker_host" {
-  ami                         = "${AMI_ID}"
-  instance_type               = "${INSTANCE_TYPE}"
-  subnet_id                   = var.subnet_id
-  key_name                    = var.key_name
-  associate_public_ip_address = true
+  if [[ "$ENV_FILE" != "" && -f "$ENV_FILE" ]]; then
+    echo "  env = [" >> "$SERVICE_FILE"
+    while IFS='=' read -r key val; do
+      [[ -z "$key" || "$key" =~ ^# ]] && continue
+      echo "    \"$key=$val\"," >> "$SERVICE_FILE"
+    done < "$ENV_FILE"
+    echo "  ]" >> "$SERVICE_FILE"
+  fi
 
-  user_data = <<-EOF2
-              #!/bin/bash
-              yum update -y
-              amazon-linux-extras install docker -y
-              service docker start
-              usermod -a -G docker ec2-user
-              docker run -d --name ssh-clean ${DOCKER_IMAGE}
-              EOF2
+  if [[ "$VOLUME_MOUNT" != "" ]]; then
+    VOL_SRC=$(echo "$VOLUME_MOUNT" | cut -d':' -f1)
+    VOL_DST=$(echo "$VOLUME_MOUNT" | cut -d':' -f2)
+    echo "  volumes {" >> "$SERVICE_FILE"
+    echo "    volume_name    = \"$VOL_SRC\"" >> "$SERVICE_FILE"
+    echo "    container_path = \"$VOL_DST\"" >> "$SERVICE_FILE"
+    echo "  }" >> "$SERVICE_FILE"
+  fi
 
-  tags = {
-    Name = "\${var.project_name}-docker-host"
-  }
+  echo "  networks_advanced {" >> "$SERVICE_FILE"
+  echo "    name = \"$NETWORK_NAME\"" >> "$SERVICE_FILE"
+  echo "  }" >> "$SERVICE_FILE"
+  echo "}" >> "$SERVICE_FILE"
+
+  echo "⚙️  Compute module written: $SERVICE"
+done
+
+# 🌍 Root-level Terraform files
+cat > main.tf <<EOF
+module "network" {
+  source = "./modules/network"
+}
+
+module "storage" {
+  source = "./modules/storage"
+}
+
+module "images" {
+  source = "./modules/images"
+}
+
+module "compute" {
+  source = "./modules/compute"
 }
 EOF
 
-cat > modules/compute/variables.tf <<EOF
-variable "project_name" { type = string }
-variable "environment"  { type = string }
-variable "subnet_id" {
-  type = string
-}
-variable "sg_id" {
-  type = string
-}
-variable "key_name" {
-  type = string
-}
-EOF
+echo "$MODULE_PROVIDER_TF" > provider.tf
+touch variables.tf outputs.tf
 
-cat > modules/compute/outputs.tf <<EOF
-output "public_ip" {
-  value = aws_instance.docker_host.public_ip
-}
-EOF
-
-echo "$ICON_COMPUTE Service module created: docker_host EC2"
-
-# ────────────────────────────────────────────────────────────────
-# Image build step (if enabled)
-# ────────────────────────────────────────────────────────────────
-if $BUILD; then
-  echo "$ICON_BUILD Building image for ssh-clean from ./ssh-clean ..."
-  docker build -t ${DOCKER_IMAGE} ./ssh-clean > /dev/null
-  docker push ${DOCKER_IMAGE} > /dev/null
-  echo "$ICON_PACKAGE Built and pushed: ${DOCKER_IMAGE}"
-fi
-
-echo "$ICON_SUCCESS All modules created!"
-echo "$ICON_READY You're ready. Run: terraform init && terraform apply"
+echo ""
+echo "✅ All modules created!"
+echo "🎯 You're ready. Run: terraform init && terraform apply"

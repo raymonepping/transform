@@ -1,14 +1,15 @@
 module "network" {
-  source       = "./modules/network"
-  project_name = var.project_name
-  environment  = var.environment
+  source = "./modules/network"
+}
+
+module "storage" {
+  source = "./modules/storage"
+}
+
+module "images" {
+  source = "./modules/images"
 }
 
 module "compute" {
-  source       = "./modules/compute"
-  project_name = var.project_name
-  environment  = var.environment
-  key_name     = var.key_name   
-  subnet_id    = module.network.subnet_id
-  sg_id        = module.network.sg_id
+  source = "./modules/compute"
 }
