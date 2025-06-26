@@ -230,7 +230,21 @@ cat > provider.tf <<EOF
 $MODULE_PROVIDER_TF
 EOF
 
-touch variables.tf outputs.tf
+cat > variables.tf <<EOF
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+  default     = ""
+}
+
+variable "project_name" {
+  description = "Name of the project"
+  type        = string
+  default     = ""
+}
+EOF
+
+touch outputs.tf
 
 echo ""
 echo "✅ All modules created!"
