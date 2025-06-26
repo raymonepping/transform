@@ -17,7 +17,7 @@ resource "docker_image" "hello" {
 
 resource "docker_container" "hello" {
   name  = "hello-from-terraform"
-  image = docker_image.hello.latest
+  image = docker_image.hello.name
   must_run = false
   rm       = true
 }
