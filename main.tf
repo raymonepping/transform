@@ -1,20 +1,25 @@
-module "network" {
-  source = "./modules/network"
-  providers = {
-    docker = docker
+terraform {
+  required_providers {
+    docker = {
+      source  = "kreuzwerker/docker"
+      version = "~> 3.0"
+    }
   }
 }
 
-module "storage" {
-  source = "./modules/storage"
-  providers = {
-    docker = docker
-  }
+provider "docker" {
+  host = "unix:///Users/raymon.epping/.docker/run/docker.sock"
 }
 
-module "compute" {
-  source = "./modules/compute"
-  providers = {
-    docker = docker
+resource "docker_image" "nginx" {
+  name = "nginx:latest"
+}
+
+resource "docker_container" "nginx" {
+  name  = "demo-nginx"
+  image = docker_image.nginx.latest
+  ports {
+    internal = 80
+    external = 8080
   }
 }
