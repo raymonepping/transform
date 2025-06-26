@@ -14,7 +14,7 @@ services:
     tty: true
     stdin_open: true
     privileged: true     
-
+    
 networks:
   transform:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 🧪 Load environment
+# 🤮 Load environment
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
   set -a; source "${SCRIPT_DIR}/.env"; set +a
@@ -23,6 +23,7 @@ NETWORK_MODULE="$MODULE_DIR/network"
 COMPUTE_MODULE="$MODULE_DIR/compute"
 STORAGE_MODULE="$MODULE_DIR/storage"
 IMAGES_MODULE="$MODULE_DIR/images"
+LABELS_MODULE="$MODULE_DIR/labels"
 
 PROVIDER="docker"
 BUILD_ENABLED=false
@@ -42,9 +43,12 @@ echo "🔧 Build enabled: $BUILD_ENABLED"
 echo "🔄 Parsing $COMPOSE_FILE into Terraform modules..."
 echo ""
 
-mkdir -p "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE"
+mkdir -p "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE" "$LABELS_MODULE"
 
-# 🧱 Provider config
+# 🧍‍♂️ Track image variables per service
+declare -A SERVICE_IMAGE_VARS
+
+# 📊 Provider config
 MODULE_PROVIDER_TF=$(cat <<EOF
 terraform {
   required_providers {
@@ -57,7 +61,7 @@ terraform {
 EOF
 )
 
-for mod in "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE"; do
+for mod in "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE" "$LABELS_MODULE"; do
   echo "$MODULE_PROVIDER_TF" > "$mod/provider.tf"
 done
 
@@ -68,16 +72,14 @@ resource "${PROVIDER}_network" "$NETWORK_NAME" {
   name = "$NETWORK_NAME"
 }
 EOF
-echo "🌐 Network module created: $NETWORK_NAME"
 
-# 💾 Volumes
+# 💲 Volumes
 yq '.volumes | keys | .[]' "$COMPOSE_FILE" | while read -r VOL; do
   cat > "$STORAGE_MODULE/${VOL}_volume.tf" <<EOF
 resource "${PROVIDER}_volume" "$VOL" {
   name = "$VOL"
 }
 EOF
-  echo "💾 Volume module created: $VOL"
 done
 
 # ⚙️ Services
@@ -88,6 +90,14 @@ yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
   ENV_FILE=$(yq ".services.${SERVICE}.env_file[0] // \"\"" "$COMPOSE_FILE")
   VOLUME_MOUNT=$(yq ".services.${SERVICE}.volumes[0] // \"\"" "$COMPOSE_FILE")
   PORTS=$(yq ".services.${SERVICE}.ports // []" "$COMPOSE_FILE" | yq 'join(", ")')
+  LABELS=$(yq ".services.${SERVICE}.labels // []" "$COMPOSE_FILE")
+  CAP_ADD=$(yq ".services.${SERVICE}.cap_add // []" "$COMPOSE_FILE")
+  TTY=$(yq ".services.${SERVICE}.tty // false" "$COMPOSE_FILE")
+  STDIN_OPEN=$(yq ".services.${SERVICE}.stdin_open // false" "$COMPOSE_FILE")
+  PRIVILEGED=$(yq ".services.${SERVICE}.privileged // false" "$COMPOSE_FILE")
+
+  IMAGE_OUTPUT_KEY=$(echo "$SERVICE" | tr '-' '_')
+  SERVICE_IMAGE_VARS["$SERVICE"]="$IMAGE_OUTPUT_KEY"
 
   if [[ "$IMAGE" == "null" && "$BUILD_CONTEXT" == "" ]]; then
     echo "⚠️  Warning: No image or build context defined for service: $SERVICE"
@@ -115,15 +125,22 @@ yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
     echo "📦 Built and pushed: $IMAGE"
   fi
 
-  # 🖼 Store image module (even for prebuilt)
-  echo "resource \"docker_image\" \"$SERVICE\" {" > "$IMAGES_MODULE/${SERVICE}.tf"
-  echo "  name = \"$IMAGE\"" >> "$IMAGES_MODULE/${SERVICE}.tf"
-  echo "}" >> "$IMAGES_MODULE/${SERVICE}.tf"
+  # 🖼 Store image module
+  cat > "$IMAGES_MODULE/${SERVICE}.tf" <<EOF
+resource "docker_image" "$SERVICE" {
+  name = "$IMAGE"
+}
+EOF
+  cat >> "$IMAGES_MODULE/outputs.tf" <<EOF
+output "${IMAGE_OUTPUT_KEY}_image" {
+  value = docker_image.${SERVICE}.name
+}
+EOF
 
-  # 🧱 Compute module
+  # 🦜 Compute module
   echo "resource \"docker_container\" \"$SERVICE\" {" > "$SERVICE_FILE"
   echo "  name  = \"$SERVICE\"" >> "$SERVICE_FILE"
-  echo "  image = docker_image.${SERVICE}.latest" >> "$SERVICE_FILE"
+  echo "  image = var.${IMAGE_OUTPUT_KEY}_image" >> "$SERVICE_FILE"
 
   if [[ "$PORTS" != "" ]]; then
     for port in $(echo "$PORTS" | sed 's/, /\n/g'); do
@@ -145,22 +162,58 @@ yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
 
   if [[ "$VOLUME_MOUNT" != "" ]]; then
     VOL_SRC=$(echo "$VOLUME_MOUNT" | cut -d':' -f1)
-    VOL_DST=$(echo "$VOLUME_MOUNT" | cut -d':' -f2)
+    VOL_DST=$(echo "$VOLUME_MOUNT" | cut -d':' -f2 | cut -d':' -f1)
     echo "  volumes {" >> "$SERVICE_FILE"
     echo "    volume_name    = \"$VOL_SRC\"" >> "$SERVICE_FILE"
     echo "    container_path = \"$VOL_DST\"" >> "$SERVICE_FILE"
+    [[ "$VOLUME_MOUNT" == *":ro" ]] && echo "    read_only = true" >> "$SERVICE_FILE"
     echo "  }" >> "$SERVICE_FILE"
   fi
+
+  if [[ "$CAP_ADD" != "[]" ]]; then
+    echo "  capabilities {" >> "$SERVICE_FILE"
+    echo "    add = [$(echo "$CAP_ADD" | yq 'map("\"" + . + "\"") | join(", ")')]" >> "$SERVICE_FILE"
+    echo "  }" >> "$SERVICE_FILE"
+  fi
+
+  [[ "$TTY" == "true" ]] && echo "  tty = true" >> "$SERVICE_FILE"
+  [[ "$STDIN_OPEN" == "true" ]] && echo "  stdin_open = true" >> "$SERVICE_FILE"
+  [[ "$PRIVILEGED" == "true" ]] && echo "  privileged = true" >> "$SERVICE_FILE"
 
   echo "  networks_advanced {" >> "$SERVICE_FILE"
   echo "    name = \"$NETWORK_NAME\"" >> "$SERVICE_FILE"
   echo "  }" >> "$SERVICE_FILE"
   echo "}" >> "$SERVICE_FILE"
 
-  echo "⚙️  Service module created: $SERVICE"
+  # 🌿 Labels
+  if [[ "$LABELS" != "[]" ]]; then
+    LABEL_FILE="$LABELS_MODULE/${SERVICE}_labels.tf"
+    echo "resource \"docker_container\" \"${SERVICE}_labels\" {" > "$LABEL_FILE"
+    echo "  name = \"$SERVICE\"" >> "$LABEL_FILE"
+    for lbl in $(echo "$LABELS" | yq '.[]'); do
+      k=$(echo "$lbl" | cut -d'=' -f1)
+      v=$(echo "$lbl" | cut -d'=' -f2-)
+      echo "  labels = { \"$k\" = \"$v\" }" >> "$LABEL_FILE"
+    done
+    echo "}" >> "$LABEL_FILE"
+  fi
+
 done
 
-# 🧾 Root Terraform Files
+# 📃 Compute variables
+touch "$COMPUTE_MODULE/variables.tf"
+for SERVICE in "${!SERVICE_IMAGE_VARS[@]}"; do
+  VAR_NAME="${SERVICE_IMAGE_VARS[$SERVICE]}_image"
+  cat >> "$COMPUTE_MODULE/variables.tf" <<EOF
+
+variable "$VAR_NAME" {
+  description = "Docker image for $SERVICE"
+  type        = string
+}
+EOF
+done
+
+# 📉 Root Terraform Files
 cat > main.tf <<EOF
 module "network" {
   source = "./modules/network"
@@ -176,8 +229,14 @@ module "images" {
 
 module "compute" {
   source = "./modules/compute"
-}
 EOF
+
+for SERVICE in "${!SERVICE_IMAGE_VARS[@]}"; do
+  VAR="${SERVICE_IMAGE_VARS[$SERVICE]}_image"
+  echo "  $VAR = module.images.$VAR" >> main.tf
+done
+
+echo "}" >> main.tf
 
 cat > provider.tf <<EOF
 $MODULE_PROVIDER_TF
@@ -187,4 +246,4 @@ touch variables.tf outputs.tf
 
 echo ""
 echo "✅ All modules created!"
-echo "🎯 You're ready. Run: terraform init && terraform apply"
+echo "🌟 You're ready. Run: terraform init && terraform apply"
