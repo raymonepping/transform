@@ -65,21 +65,27 @@ for mod in "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE
 done
 
 # 🌐 Network
-NETWORK_NAME=$(yq '.networks | keys | .[0]' "$COMPOSE_FILE")
-cat > "$NETWORK_MODULE/${PROVIDER}_network.tf" <<EOF
+NETWORK_NAME=$(yq '.networks | keys | .[0] // ""' "$COMPOSE_FILE")
+if [[ -n "$NETWORK_NAME" ]]; then
+  cat > "$NETWORK_MODULE/${PROVIDER}_network.tf" <<EOF
 resource "${PROVIDER}_network" "$NETWORK_NAME" {
   name = "$NETWORK_NAME"
 }
 EOF
+else
+  NETWORK_NAME="bridge"
+fi
 
-# 💾 Volumes
-yq '.volumes | keys | .[]' "$COMPOSE_FILE" | while read -r VOL; do
-  cat > "$STORAGE_MODULE/${VOL}_volume.tf" <<EOF
+# 💾 Volumes (safe check)
+if [[ $(yq e '.volumes' "$COMPOSE_FILE") != "null" ]]; then
+  yq e '.volumes | keys | .[]' "$COMPOSE_FILE" | while read -r VOL; do
+    cat > "$STORAGE_MODULE/${VOL}_volume.tf" <<EOF
 resource "${PROVIDER}_volume" "$VOL" {
   name = "$VOL"
 }
 EOF
-done
+  done
+fi
 
 # ⚙️ Services
 for SERVICE in $(yq -r '.services | keys | .[]' "$COMPOSE_FILE"); do
@@ -253,9 +259,14 @@ for SERVICE in "${!SERVICE_IMAGE_VARS[@]}"; do
 }" >> outputs.tf
 done
 
+# 📦 Also expose image names from image module
+for SERVICE in "${!SERVICE_IMAGE_VARS[@]}"; do
+  VAR="${SERVICE_IMAGE_VARS[$SERVICE]}_image"
+  echo "output \"$VAR\" {
+  value = module.images.$VAR
+}" >> outputs.tf
+done
+
 echo ""
 echo "✅ All modules created!"
-
-
-
 echo "🌟 You're ready. Run: terraform init && terraform apply"
