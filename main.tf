@@ -13,4 +13,5 @@ module "images" {
 module "compute" {
   source = "./modules/compute"
   ssh_clean_image = module.images.ssh_clean_image
+  mysql_image = module.images.mysql_image
 }

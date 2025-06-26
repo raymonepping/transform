@@ -13,7 +13,24 @@ services:
       - IPC_LOCK
     tty: true
     stdin_open: true
-    privileged: true     
+    privileged: true
+
+  mysql:
+    image: mysql:8.4
+    container_name: mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
     
 networks:
   transform:
+
+volumes:
+  mysql_data:  
