@@ -1,4 +1,4 @@
 variable "ssh_clean_image" {
-  description = "Docker image name for ssh-clean"
+  description = "Docker image for ssh-clean"
   type        = string
 }

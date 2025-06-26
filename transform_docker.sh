@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
+#!/opt/homebrew/bin/bash
 set -euo pipefail
 
-# 🤮 Load environment
+# 🧪 Load environment
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
   set -a; source "${SCRIPT_DIR}/.env"; set +a
@@ -23,10 +23,12 @@ NETWORK_MODULE="$MODULE_DIR/network"
 COMPUTE_MODULE="$MODULE_DIR/compute"
 STORAGE_MODULE="$MODULE_DIR/storage"
 IMAGES_MODULE="$MODULE_DIR/images"
-LABELS_MODULE="$MODULE_DIR/labels"
 
 PROVIDER="docker"
 BUILD_ENABLED=false
+
+# 🧠 Image mapping
+declare -A SERVICE_IMAGE_VARS
 
 # 🎮 Parse CLI flags
 while [[ $# -gt 0 ]]; do
@@ -43,12 +45,9 @@ echo "🔧 Build enabled: $BUILD_ENABLED"
 echo "🔄 Parsing $COMPOSE_FILE into Terraform modules..."
 echo ""
 
-mkdir -p "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE" "$LABELS_MODULE"
+mkdir -p "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE"
 
-# 🧍‍♂️ Track image variables per service
-declare -A SERVICE_IMAGE_VARS
-
-# 📊 Provider config
+# 🧱 Provider block
 MODULE_PROVIDER_TF=$(cat <<EOF
 terraform {
   required_providers {
@@ -61,7 +60,7 @@ terraform {
 EOF
 )
 
-for mod in "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE" "$LABELS_MODULE"; do
+for mod in "$NETWORK_MODULE" "$COMPUTE_MODULE" "$STORAGE_MODULE" "$IMAGES_MODULE"; do
   echo "$MODULE_PROVIDER_TF" > "$mod/provider.tf"
 done
 
@@ -73,7 +72,7 @@ resource "${PROVIDER}_network" "$NETWORK_NAME" {
 }
 EOF
 
-# 💲 Volumes
+# 💾 Volumes
 yq '.volumes | keys | .[]' "$COMPOSE_FILE" | while read -r VOL; do
   cat > "$STORAGE_MODULE/${VOL}_volume.tf" <<EOF
 resource "${PROVIDER}_volume" "$VOL" {
@@ -83,28 +82,24 @@ EOF
 done
 
 # ⚙️ Services
-yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
+for SERVICE in $(yq -r '.services | keys | .[]' "$COMPOSE_FILE"); do
   SERVICE_FILE="$COMPUTE_MODULE/${SERVICE}.tf"
   IMAGE=$(yq ".services.${SERVICE}.image // \"null\"" "$COMPOSE_FILE")
   BUILD_CONTEXT=$(yq ".services.${SERVICE}.build.context // \"\"" "$COMPOSE_FILE")
   ENV_FILE=$(yq ".services.${SERVICE}.env_file[0] // \"\"" "$COMPOSE_FILE")
   VOLUME_MOUNT=$(yq ".services.${SERVICE}.volumes[0] // \"\"" "$COMPOSE_FILE")
   PORTS=$(yq ".services.${SERVICE}.ports // []" "$COMPOSE_FILE" | yq 'join(", ")')
-  LABELS=$(yq ".services.${SERVICE}.labels // []" "$COMPOSE_FILE")
-  CAP_ADD=$(yq ".services.${SERVICE}.cap_add // []" "$COMPOSE_FILE")
   TTY=$(yq ".services.${SERVICE}.tty // false" "$COMPOSE_FILE")
   STDIN_OPEN=$(yq ".services.${SERVICE}.stdin_open // false" "$COMPOSE_FILE")
   PRIVILEGED=$(yq ".services.${SERVICE}.privileged // false" "$COMPOSE_FILE")
-
-  IMAGE_OUTPUT_KEY=$(echo "$SERVICE" | tr '-' '_')
-  SERVICE_IMAGE_VARS["$SERVICE"]="$IMAGE_OUTPUT_KEY"
+  CAP_ADD=$(yq ".services.${SERVICE}.cap_add // []" "$COMPOSE_FILE")
 
   if [[ "$IMAGE" == "null" && "$BUILD_CONTEXT" == "" ]]; then
     echo "⚠️  Warning: No image or build context defined for service: $SERVICE"
     continue
   fi
 
-  # 🔨 Optional build
+  # 🔨 Build if needed
   if [[ "$BUILD_ENABLED" == "true" && "$BUILD_CONTEXT" != "" ]]; then
     echo "🔧 Building image for $SERVICE from $BUILD_CONTEXT ..."
     VERSION_FILE="${BUILD_CONTEXT}/.image_version"
@@ -125,19 +120,21 @@ yq '.services | keys | .[]' "$COMPOSE_FILE" | while read -r SERVICE; do
     echo "📦 Built and pushed: $IMAGE"
   fi
 
-  # 🖼 Store image module
+  # 🖼 Write docker_image + output
+  IMAGE_OUTPUT_KEY=$(echo "$SERVICE" | tr '-' '_')
+  SERVICE_IMAGE_VARS["$SERVICE"]="$IMAGE_OUTPUT_KEY"
+
   cat > "$IMAGES_MODULE/${SERVICE}.tf" <<EOF
 resource "docker_image" "$SERVICE" {
   name = "$IMAGE"
 }
 EOF
-  cat >> "$IMAGES_MODULE/outputs.tf" <<EOF
-output "${IMAGE_OUTPUT_KEY}_image" {
-  value = docker_image.${SERVICE}.name
-}
-EOF
 
-  # 🦜 Compute module
+  echo "output \"${IMAGE_OUTPUT_KEY}_image\" {
+  value = docker_image.${SERVICE}.name
+}" >> "$IMAGES_MODULE/outputs.tf"
+
+  # 🧱 Container definition
   echo "resource \"docker_container\" \"$SERVICE\" {" > "$SERVICE_FILE"
   echo "  name  = \"$SERVICE\"" >> "$SERVICE_FILE"
   echo "  image = var.${IMAGE_OUTPUT_KEY}_image" >> "$SERVICE_FILE"
@@ -185,35 +182,26 @@ EOF
   echo "  }" >> "$SERVICE_FILE"
   echo "}" >> "$SERVICE_FILE"
 
-  # 🌿 Labels
-  if [[ "$LABELS" != "[]" ]]; then
-    LABEL_FILE="$LABELS_MODULE/${SERVICE}_labels.tf"
-    echo "resource \"docker_container\" \"${SERVICE}_labels\" {" > "$LABEL_FILE"
-    echo "  name = \"$SERVICE\"" >> "$LABEL_FILE"
-    for lbl in $(echo "$LABELS" | yq '.[]'); do
-      k=$(echo "$lbl" | cut -d'=' -f1)
-      v=$(echo "$lbl" | cut -d'=' -f2-)
-      echo "  labels = { \"$k\" = \"$v\" }" >> "$LABEL_FILE"
-    done
-    echo "}" >> "$LABEL_FILE"
-  fi
-
 done
 
-# 📃 Compute variables
-touch "$COMPUTE_MODULE/variables.tf"
+# 📦 Add variables for all container image vars
+: > "$COMPUTE_MODULE/variables.tf"
 for SERVICE in "${!SERVICE_IMAGE_VARS[@]}"; do
   VAR_NAME="${SERVICE_IMAGE_VARS[$SERVICE]}_image"
-  cat >> "$COMPUTE_MODULE/variables.tf" <<EOF
-
-variable "$VAR_NAME" {
-  description = "Docker image for $SERVICE"
+  echo "variable \"$VAR_NAME\" {
+  description = \"Docker image for $SERVICE\"
   type        = string
-}
-EOF
+}" >> "$COMPUTE_MODULE/variables.tf"
 done
 
-# 📉 Root Terraform Files
+echo "🧪 DEBUG: Discovered service-to-image vars:"
+for SERVICE in "${!SERVICE_IMAGE_VARS[@]}"; do
+  VAR="${SERVICE_IMAGE_VARS[$SERVICE]}_image"
+  echo " - $SERVICE → $VAR"
+done
+
+
+# 🧾 Root Terraform Files
 cat > main.tf <<EOF
 module "network" {
   source = "./modules/network"

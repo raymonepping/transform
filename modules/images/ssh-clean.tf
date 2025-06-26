@@ -1,3 +1,3 @@
 resource "docker_image" "ssh-clean" {
-  name = "repping/ssh-clean:1.4.21"
+  name = "repping/ssh-clean:1.4.29"
 }
