@@ -1,6 +1,6 @@
 resource "docker_container" "ssh-clean" {
   name  = "ssh-clean"
-  image = "repping/ssh-clean:1.4.14"
+  image = "repping/ssh-clean:1.4.16"
   ports {
     internal = 22
     external = 2222

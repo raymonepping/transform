@@ -82,18 +82,12 @@ echo "$MODULE_PROVIDER_TF" > "$STORAGE_MODULE/provider.tf"
 
 # === Network
 NETWORK_NAME=$(yq '.networks | keys | .[0]' "$COMPOSE_FILE")
-NETWORK_FILE="$NETWORK_MODULE/${NETWORK_NAME}_network.tf"
-
-if [[ ! -f "$NETWORK_FILE" ]]; then
-  cat > "$NETWORK_FILE" <<EOF
+cat > "$NETWORK_MODULE/${PROVIDER}_network.tf" <<EOF
 resource "${PROVIDER}_network" "$NETWORK_NAME" {
   name = "$NETWORK_NAME"
 }
 EOF
-  echo "🌐 Network module created: $NETWORK_NAME"
-else
-  echo "⚠️  Network module for '$NETWORK_NAME' already exists. Skipping."
-fi
+echo "✅ Network module created: $NETWORK_NAME"
 
 # === Volumes
 yq '.volumes | keys | .[]' "$COMPOSE_FILE" | while read -r VOL; do
