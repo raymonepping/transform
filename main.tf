@@ -11,13 +11,15 @@ provider "docker" {
   host = "unix:///var/run/docker.sock"
 }
 
-resource "docker_image" "hello" {
-  name = "hello-world:latest"
+resource "docker_image" "nginx" {
+  name = "nginx:latest"
 }
 
-resource "docker_container" "hello" {
-  name  = "hello-from-terraform"
-  image = docker_image.hello.name
-  must_run = true
-  rm       = false
+resource "docker_container" "nginx" {
+  name  = "nginx-from-terraform"
+  image = docker_image.nginx.name
+  ports {
+    internal = 80
+    external = 8080
+  }
 }
