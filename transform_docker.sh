@@ -199,15 +199,8 @@ done
 for SERVICE in "${!SERVICE_IMAGE_VARS[@]}"; do
   echo "output \"${SERVICE}_name\" {
   value = docker_container.${SERVICE}.name
-}
-
-output \"${SERVICE}_ip\" {
-  value = docker_container.${SERVICE}.ip_address
-}
-" >> "$COMPUTE_MODULE/outputs.tf"
+}" >> "$COMPUTE_MODULE/outputs.tf"
 done
-
-
 
 # 🧾 Root Terraform Files
 cat > main.tf <<EOF
