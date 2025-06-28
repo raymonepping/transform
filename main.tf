@@ -1,17 +1,20 @@
-module "network" {
-  source = "./modules/network"
+
+data "hcp_packer_artifact" "ubuntu_hardened" {
+  bucket_name  = "ubuntu-hardened"
+  channel_name = "latest"
+  platform     = "docker"
+  region       = "docker"
 }
 
-module "storage" {
-  source = "./modules/storage"
+resource "docker_image" "ubuntu_hardened" {
+  name = data.hcp_packer_artifact.ubuntu_hardened.external_identifier
 }
 
-module "images" {
-  source = "./modules/images"
-}
-
-module "compute" {
-  source = "./modules/compute"
-  ssh_clean_image = module.images.ssh_clean_image
-  mysql_image = module.images.mysql_image
+resource "docker_container" "example" {
+  name  = "ubuntu-secure"
+  image = docker_image.ubuntu_hardened.name
+  ports {
+    internal = 80
+    external = 8080
+  }
 }
